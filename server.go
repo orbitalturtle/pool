@@ -132,7 +132,7 @@ func (s *Server) Start() error {
 	// what we need
 	s.lndClient, err = lndclient.NewBasicClient(
 		s.cfg.Lnd.Host, s.cfg.Lnd.TLSPath,
-		path.Dir(s.cfg.Lnd.MacaroonPath), s.cfg.Network,
+		path.Dir(s.cfg.Lnd.MacaroonPath), "", "", s.cfg.Network,
 		lndclient.MacFilename(path.Base(s.cfg.Lnd.MacaroonPath)),
 	)
 	if err != nil {
@@ -305,7 +305,7 @@ func (s *Server) Start() error {
 // StartAsSubserver is an alternative start method where the RPC server does not
 // create its own gRPC server but registers on an existing one.
 func (s *Server) StartAsSubserver(lndClient lnrpc.LightningClient,
-	lndGrpc *lndclient.GrpcLndServices) error {
+	lndGrpc *lndclient.GrpcLndServices, macData string) error {
 
 	if atomic.AddInt32(&s.started, 1) != 1 {
 		return fmt.Errorf("trader can only be started once")
@@ -330,12 +330,17 @@ func (s *Server) StartAsSubserver(lndClient lnrpc.LightningClient,
 		}
 	}()
 
-	// Start the macaroon service and let it create its default macaroon in
-	// case it doesn't exist yet.
-	if err := s.startMacaroonService(); err != nil {
-		return err
+	// If a macaroon string was passed in from lndclient, then we already 
+	// have a macaroon for Pool and don't need to start the macaroon
+	// service.
+	if macData == "" {
+		// Start the macaroon service and let it create its default 
+		// macaroon in case it doesn't exist yet.
+		if err := s.startMacaroonService(); err != nil {
+			return err
+		}
+		shutdownFuncs["macaroon"] = s.stopMacaroonService
 	}
-	shutdownFuncs["macaroon"] = s.stopMacaroonService
 
 	// Setup the auctioneer client and interceptor.
 	err := s.setupClient()
@@ -578,8 +583,10 @@ func (s *Server) Stop() error {
 	if err := s.db.Close(); err != nil {
 		log.Errorf("Error closing DB: %v", err)
 	}
-	if err := s.macaroonService.Close(); err != nil {
-		log.Errorf("Error stopping macaroon service: %v", err)
+	if s.macaroonService != nil {
+		if err := s.macaroonService.Close(); err != nil {
+			log.Errorf("Error stopping macaroon service: %v", err)
+		}
 	}
 	s.lndServices.Close()
 	s.wg.Wait()
