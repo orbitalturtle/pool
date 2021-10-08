@@ -1,4 +1,4 @@
-package pool
+package acceptor
 
 import (
 	"context"
@@ -287,7 +287,7 @@ func (a *SidecarNegotiator) autoSidecarReceiver(ctx context.Context,
 		// We'll continue to read out new messages from the cipherbox
 		// stream and deliver them to the main gorotuine until we
 		// receive a message over the cancel channel.
-		var retryTimer backOffer
+		var retryTimer BackOffer
 		backoffLabel := fmt.Sprintf("ticket_id=%x",
 			startingPkt.ReceiverTicket.ID[:])
 		for {
@@ -298,7 +298,7 @@ func (a *SidecarNegotiator) autoSidecarReceiver(ctx context.Context,
 				log.Error(err)
 
 				select {
-				case <-retryTimer.backOff(backoffLabel):
+				case <-retryTimer.BackOff(backoffLabel):
 					continue
 				case <-a.quit:
 					return
@@ -517,7 +517,7 @@ func (a *SidecarNegotiator) autoSidecarProvider(ctx context.Context, startingPkt
 		// We'll continue to read out new messages from the cipherbox
 		// stream and deliver them to the main gorotuine until we
 		// receive a message over the cancel channel.
-		var retryTimer backOffer
+		var retryTimer BackOffer
 		backoffLabel := fmt.Sprintf("ticket_id=%x",
 			startingPkt.ReceiverTicket.ID[:])
 		for {
@@ -528,7 +528,7 @@ func (a *SidecarNegotiator) autoSidecarProvider(ctx context.Context, startingPkt
 				log.Error(err)
 
 				select {
-				case <-retryTimer.backOff(backoffLabel):
+				case <-retryTimer.BackOff(backoffLabel):
 					continue
 				case <-a.quit:
 					return

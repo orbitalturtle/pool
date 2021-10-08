@@ -373,7 +373,7 @@ func loadCertWithCreate(cfg *Config) (tls.Certificate, *x509.Certificate,
 			defaultSelfSignedOrganization, cfg.TLSCertPath,
 			cfg.TLSKeyPath, cfg.TLSExtraIPs,
 			cfg.TLSExtraDomains, cfg.TLSDisableAutofill,
-			cert.DefaultAutogenValidity,
+			14*30*24*time.Hour,
 		)
 		if err != nil {
 			return tls.Certificate{}, nil, err

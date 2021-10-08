@@ -1,4 +1,4 @@
-package pool
+package acceptor
 
 import "time"
 
@@ -14,14 +14,14 @@ const (
 
 // backOffer implements a simple exponential back off scheme using a channel
 // and a timer.
-type backOffer struct {
+type BackOffer struct {
 	backOffPeriod time.Duration
 }
 
 // backOff returns a channel that should be used to wait for the current back
 // off period before doubling the period for the subsequent call to this
 // method.
-func (b *backOffer) backOff(logID string) <-chan time.Time {
+func (b *BackOffer) BackOff(logID string) <-chan time.Time {
 	// The first time around, this'll multiply by zero meaning there's no
 	// back off, which'll trigger the base case below to use the min back
 	// off.
