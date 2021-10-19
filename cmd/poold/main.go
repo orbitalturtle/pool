@@ -12,6 +12,10 @@ import (
 
 	"github.com/jessevdk/go-flags"
 	"github.com/lightninglabs/pool"
+	"github.com/lightninglabs/pool/acceptor"
+
+	// Blank import to set up profiling HTTP handlers.
+	_ "net/http/pprof"
 )
 
 var (
@@ -89,7 +93,7 @@ func start() error {
 		appName := filepath.Base(os.Args[0])
 		appName = strings.TrimSuffix(appName, filepath.Ext(appName))
 		if config.ShowVersion {
-			fmt.Println(appName, "version", pool.Version())
+			fmt.Println(appName, "version", acceptor.Version())
 			os.Exit(0)
 		}
 

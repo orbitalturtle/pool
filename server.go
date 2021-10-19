@@ -18,6 +18,7 @@ import (
 	proxy "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightninglabs/aperture/lsat"
 	"github.com/lightninglabs/lndclient"
+	"github.com/lightninglabs/pool/acceptor"
 	"github.com/lightninglabs/pool/account"
 	"github.com/lightninglabs/pool/auctioneer"
 	"github.com/lightninglabs/pool/clientdb"
@@ -74,7 +75,7 @@ type Server struct {
 	cfg             *Config
 	db              *clientdb.DB
 	fundingManager  *funding.Manager
-	sidecarAcceptor *SidecarAcceptor
+	sidecarAcceptor *acceptor.SidecarAcceptor
 	lsatStore       *lsat.FileStore
 	lndServices     *lndclient.GrpcLndServices
 	lndClient       lnrpc.LightningClient
@@ -102,7 +103,7 @@ func (s *Server) Start() error {
 	}
 
 	// Print the version before executing either primary directive.
-	log.Infof("Version: %v", Version())
+	log.Infof("Version: %v", acceptor.Version())
 
 	// Depending on how far we got in initializing the server, we might need
 	// to clean up certain services that were already started. Keep track of
@@ -339,7 +340,7 @@ func (s *Server) StartAsSubserver(lndClient lnrpc.LightningClient,
 	s.lndServices = lndGrpc
 
 	// Print the version before executing either primary directive.
-	log.Infof("Version: %v", Version())
+	log.Infof("Version: %v", acceptor.Version())
 
 	// Depending on how far we got in initializing the server, we might need
 	// to clean up certain services that were already started. Keep track of
@@ -523,7 +524,7 @@ func (s *Server) setupClient() error {
 	// Create the funding manager. The RPC server is responsible for
 	// starting/stopping it though as all that logic is currently there for
 	// the other managers as well.
-	channelAcceptor := NewChannelAcceptor(s.lndServices.Client)
+	channelAcceptor := acceptor.NewChannelAcceptor(s.lndServices.Client)
 	s.fundingManager = funding.NewManager(&funding.ManagerConfig{
 		DB:                s.db,
 		WalletKit:         s.lndServices.WalletKit,
@@ -552,7 +553,7 @@ func (s *Server) setupClient() error {
 			s.cfg.DebugConfig.BatchVersion,
 		),
 		GenUserAgent: func(ctx context.Context) string {
-			return UserAgent(InitiatorFromContext(ctx))
+			return acceptor.UserAgent(acceptor.InitiatorFromContext(ctx))
 		},
 	}
 
@@ -560,9 +561,9 @@ func (s *Server) setupClient() error {
 	// create a copy of the auctioneer client configuration because the
 	// acceptor is going to overwrite some of its values.
 	clientCfgCopy := *clientCfg
-	s.sidecarAcceptor = NewSidecarAcceptor(&SidecarAcceptorConfig{
+	s.sidecarAcceptor = acceptor.NewSidecarAcceptor(&acceptor.SidecarAcceptorConfig{
 		SidecarDB:      s.db,
-		AcctDB:         &accountStore{DB: s.db},
+		AcctDB:         &acceptor.AccountStore{DB: s.db},
 		Signer:         s.lndServices.Signer,
 		Wallet:         s.lndServices.WalletKit,
 		BaseClient:     s.lndClient,
