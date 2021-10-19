@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/chanbackup"
+        "github.com/lightningnetwork/lnd/lnencrypt"
 )
 
 // ChannelInfo contains the relevant info required for a third-party to detect a
@@ -127,6 +128,7 @@ func fetchChannelBackup(ctx context.Context, client lndclient.LightningClient,
 	}
 
 	var channelBackup chanbackup.Single
+        channelBackup.Encrypter = lnencrypt.Encrypter{}
 	err = channelBackup.UnpackFromReader(
 		bytes.NewReader(rawChannelBackup), &scbKeyRing{
 			encryptionKey: *scbEncryptionKey,

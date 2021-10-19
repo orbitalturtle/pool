@@ -382,12 +382,14 @@ func getTLSConfig(cfg *Config) (*tls.Config, *credentials.TransportCredentials,
 func loadCertWithCreate(cfg *Config) (tls.Certificate, *x509.Certificate,
 	error) {
 
+	var certBytes, keyBytes []byte
+	var err error
 	// Ensure we create TLS key and certificate if they don't exist.
 	if !lnrpc.FileExists(cfg.TLSCertPath) &&
 		!lnrpc.FileExists(cfg.TLSKeyPath) {
 
 		log.Infof("Generating TLS certificates...")
-		err := cert.GenCertPair(
+		certBytes, keyBytes, err = cert.GenCertPair(
 			defaultSelfSignedOrganization, cfg.TLSCertPath,
 			cfg.TLSKeyPath, cfg.TLSExtraIPs,
 			cfg.TLSExtraDomains, cfg.TLSDisableAutofill,
@@ -399,5 +401,5 @@ func loadCertWithCreate(cfg *Config) (tls.Certificate, *x509.Certificate,
 		log.Infof("Done generating TLS certificates")
 	}
 
-	return cert.LoadCert(cfg.TLSCertPath, cfg.TLSKeyPath)
+	return cert.LoadCert(certBytes, keyBytes)
 }
