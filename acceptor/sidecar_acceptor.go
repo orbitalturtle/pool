@@ -1,4 +1,4 @@
-package pool
+package acceptor
 
 import (
 	"bytes"
@@ -7,15 +7,19 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/pool/account"
 	"github.com/lightninglabs/pool/auctioneer"
 	"github.com/lightninglabs/pool/auctioneerrpc"
+	"github.com/lightninglabs/pool/chaninfo"
 	"github.com/lightninglabs/pool/clientdb"
 	"github.com/lightninglabs/pool/funding"
 	"github.com/lightninglabs/pool/order"
 	"github.com/lightninglabs/pool/sidecar"
+	"github.com/lightninglabs/pool/terms"
+	"github.com/lightningnetwork/lnd/chanbackup"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/subscribe"
 	"google.golang.org/grpc/codes"
@@ -47,6 +51,8 @@ type SidecarAcceptor struct {
 
 	sync.Mutex
 
+        FundingManager *funding.Manager
+
 	// negotiators maps a potential stream ID (of the recipient) to the
 	// active sidecar negotiator. We'll maintain this map to be able to
 	// shutdown the negotiators, as well as notify them that the ticket has
@@ -55,6 +61,82 @@ type SidecarAcceptor struct {
 
 	quit chan struct{}
 	wg   sync.WaitGroup
+}
+
+// orderPreparer represents a type of function that inserts the order into the
+// local database, and returns the params needed to submit it to the
+// auctioneer.
+type OrderPreparer func(context.Context, order.Order,
+	*account.Account, *terms.AuctioneerTerms) (*order.ServerOrderParams, error)
+
+// prepareAndSubmitOrder performs a series of final checks locally to ensure
+// the order is valid, before submitting it to the auctioneer.
+func PrepareAndSubmitOrder(ctx context.Context, o order.Order,
+	auctionTerms *terms.AuctioneerTerms, acct *account.Account,
+	auction *auctioneer.Client, prepareOrder OrderPreparer) error {
+
+	// Collect all the order data and sign it before sending it to the
+	// auction server.
+	serverParams, err := prepareOrder(
+		ctx, o, acct, auctionTerms,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Send the order to the server. If this fails, then the order is
+	// certain to never get into the order book. We don't need to keep it
+	// around in that case.
+	//
+	// TODO(roasbeef): commit initiator to disk so don't lose when
+	// submitting orders for sidecar channels?
+	return auction.SubmitOrder(
+		ctx, o, serverParams,
+	)
+}
+
+// marshallChannelInfo turns the given channel information map into its RPC
+// counterpart.
+func MarshallChannelInfo(chanInfos map[wire.OutPoint]*chaninfo.ChannelInfo) (
+	map[string]*auctioneerrpc.ChannelInfo, error) {
+
+	rpcChannelInfos := make(
+		map[string]*auctioneerrpc.ChannelInfo, len(chanInfos),
+	)
+	for chanPoint, chanInfo := range chanInfos {
+		var channelType auctioneerrpc.ChannelType
+		switch chanInfo.Version {
+		case chanbackup.TweaklessCommitVersion:
+			channelType = auctioneerrpc.ChannelType_TWEAKLESS
+
+		// The AnchorsCommitVersion was never widely deployed (at least
+		// in mainnet) because the lnd version that included it guarded
+		// the anchor channels behind a config flag. Also, the two
+		// anchor versions only differ in the fee negotiation and not
+		// the commitment TX format, so we don't need to distinguish
+		// between them for our purpose.
+		case chanbackup.AnchorsCommitVersion,
+			chanbackup.AnchorsZeroFeeHtlcTxCommitVersion:
+
+			channelType = auctioneerrpc.ChannelType_ANCHORS
+		default:
+			return nil, fmt.Errorf("unknown channel type: %v",
+				chanInfo.Version)
+		}
+		rpcChannelInfos[chanPoint.String()] = &auctioneerrpc.ChannelInfo{
+			Type: channelType,
+			LocalNodeKey: chanInfo.LocalNodeKey.
+				SerializeCompressed(),
+			RemoteNodeKey: chanInfo.RemoteNodeKey.
+				SerializeCompressed(),
+			LocalPaymentBasePoint: chanInfo.LocalPaymentBasePoint.
+				SerializeCompressed(),
+			RemotePaymentBasePoint: chanInfo.RemotePaymentBasePoint.
+				SerializeCompressed(),
+		}
+	}
+
+	return rpcChannelInfos, nil
 }
 
 // SidecarAcceptorConfig holds all the configuration information that sidecar
@@ -76,7 +158,7 @@ type SidecarAcceptorConfig struct {
 
 	ClientCfg auctioneer.Config
 
-	PrepareOrder orderPreparer
+	PrepareOrder OrderPreparer
 
 	FundingManager *funding.Manager
 
@@ -384,9 +466,9 @@ func (a *SidecarAcceptor) ExpectChannel(ctx context.Context,
 	})
 }
 
-// validateOrderedTicket validates a ticket in the ordered state to ensure all
+// ValidateOrderedTicket validates a ticket in the ordered state to ensure all
 // the details are in place, and signed properly.
-func validateOrderedTicket(ctx context.Context, t *sidecar.Ticket,
+func ValidateOrderedTicket(ctx context.Context, t *sidecar.Ticket,
 	signer lndclient.SignerClient, db sidecar.Store) error {
 
 	// The ticket should be in the ordered state at this point (has the bid
@@ -467,7 +549,7 @@ func (a *SidecarAcceptor) SubmitSidecarOrder(ticket *sidecar.Ticket, bid *order.
 		return nil, fmt.Errorf("could not query auctioneer terms: %v", err)
 	}
 
-	err = prepareAndSubmitOrder(
+	err = PrepareAndSubmitOrder(
 		ctx, bid, auctionTerms, acct, a.client, a.cfg.PrepareOrder,
 	)
 	if err != nil {
@@ -653,7 +735,7 @@ func (a *SidecarAcceptor) matchSign(batch *order.Batch) error {
 		return fmt.Errorf("error setting up channels: %v", err)
 	}
 
-	rpcChannelInfos, err := marshallChannelInfo(channelInfos)
+	rpcChannelInfos, err := MarshallChannelInfo(channelInfos)
 	if err != nil {
 		return fmt.Errorf("error setting up channels: %v", err)
 	}
@@ -810,7 +892,7 @@ func (a *SidecarAcceptor) UpdateSidecar(tkt *sidecar.Ticket) error {
 // properly transitioned to the ordered state.
 func (a *SidecarAcceptor) ValidateOrderedTicket(tkt *sidecar.Ticket) error {
 	ctx := context.Background()
-	return validateOrderedTicket(ctx, tkt, a.cfg.Signer, a.cfg.SidecarDB)
+	return ValidateOrderedTicket(ctx, tkt, a.cfg.Signer, a.cfg.SidecarDB)
 }
 
 // InitAcctMailbox attempts to create the mailbox with the given stream ID
