@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightninglabs/lndclient"
+	"github.com/lightninglabs/pool/acceptor"
 	"github.com/lightninglabs/pool/account"
 	"github.com/lightninglabs/pool/auctioneer"
 	"github.com/lightninglabs/pool/auctioneerrpc"
@@ -29,7 +30,6 @@ import (
 	"github.com/lightninglabs/pool/poolscript"
 	"github.com/lightninglabs/pool/sidecar"
 	"github.com/lightninglabs/pool/terms"
-	"github.com/lightningnetwork/lnd/chanbackup"
 	lndFunding "github.com/lightningnetwork/lnd/funding"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -77,24 +77,11 @@ type rpcServer struct {
 	wumboSupported bool
 }
 
-// accountStore is a clientdb.DB wrapper to implement the account.Store
-// interface.
-type accountStore struct {
-	*clientdb.DB
-}
-
-var _ account.Store = (*accountStore)(nil)
-
-func (s *accountStore) PendingBatch() error {
-	_, err := s.DB.PendingBatchSnapshot()
-	return err
-}
-
 // newRPCServer creates a new client-side RPC server that uses the given
 // connection to the trader's lnd node and the auction server. A client side
 // database is created in `serverDir` if it does not yet exist.
 func newRPCServer(server *Server) *rpcServer {
-	accountStore := &accountStore{server.db}
+	accountStore := &acceptor.AccountStore{server.db}
 	lndServices := &server.lndServices.LndServices
 	return &rpcServer{
 		server:      server,
@@ -568,7 +555,7 @@ func (s *rpcServer) InitAccount(ctx context.Context,
 	}
 
 	acct, err := s.accountManager.InitAccount(
-		ContextWithInitiator(ctx, req.Initiator),
+		acceptor.ContextWithInitiator(ctx, req.Initiator),
 		btcutil.Amount(req.AccountValue), feeRate,
 		expiryHeight, bestHeight,
 	)
@@ -1248,38 +1235,6 @@ func (s *rpcServer) validateOrder(order order.Order, acct *account.Account,
 	return nil
 }
 
-// orderPreparer represents a type of function that inserts the order into the
-// local database, and returns the params needed to submit it to the
-// auctioneer.
-type orderPreparer func(context.Context, order.Order,
-	*account.Account, *terms.AuctioneerTerms) (*order.ServerOrderParams, error)
-
-// prepareAndSubmitOrder performs a series of final checks locally to ensure
-// the order is valid, before submitting it to the auctioneer.
-func prepareAndSubmitOrder(ctx context.Context, o order.Order,
-	auctionTerms *terms.AuctioneerTerms, acct *account.Account,
-	auction *auctioneer.Client, prepareOrder orderPreparer) error {
-
-	// Collect all the order data and sign it before sending it to the
-	// auction server.
-	serverParams, err := prepareOrder(
-		ctx, o, acct, auctionTerms,
-	)
-	if err != nil {
-		return err
-	}
-
-	// Send the order to the server. If this fails, then the order is
-	// certain to never get into the order book. We don't need to keep it
-	// around in that case.
-	//
-	// TODO(roasbeef): commit initiator to disk so don't lose when
-	// submitting orders for sidecar channels?
-	return auction.SubmitOrder(
-		ctx, o, serverParams,
-	)
-}
-
 // SubmitOrder assembles all the information that is required to submit an order
 // from the trader's lnd node, signs it and then sends the order to the server
 // to be included in the auctioneer's order book.
@@ -1381,8 +1336,8 @@ func (s *rpcServer) SubmitOrder(ctx context.Context,
 
 	// Finally add the order to the local order database, and submit it to
 	// the auctioneer server.
-	err = prepareAndSubmitOrder(
-		ContextWithInitiator(ctx, req.Initiator), o, auctionTerms,
+	err = acceptor.PrepareAndSubmitOrder(
+		acceptor.ContextWithInitiator(ctx, req.Initiator), o, auctionTerms,
 		acct, s.auctioneer, s.orderManager.PrepareOrder,
 	)
 	if err != nil {
@@ -1843,7 +1798,7 @@ func (s *rpcServer) sendSignBatch(batch *order.Batch, sigs order.BatchSignature,
 		rpcSigs[key] = sig.Serialize()
 	}
 
-	rpcChannelInfos, err := marshallChannelInfo(chanInfos)
+	rpcChannelInfos, err := acceptor.MarshallChannelInfo(chanInfos)
 	if err != nil {
 		return fmt.Errorf("error marshalling channel info: %v", err)
 	}
@@ -2322,7 +2277,7 @@ func (s *rpcServer) GetInfo(ctx context.Context,
 	_ *poolrpc.GetInfoRequest) (*poolrpc.GetInfoResponse, error) {
 
 	info := &poolrpc.GetInfoResponse{
-		Version:                Version(),
+		Version:                acceptor.Version(),
 		CurrentBlockHeight:     atomic.LoadUint32(&s.bestHeight),
 		SubscribedToAuctioneer: s.auctioneer.IsSubscribed(),
 		NewNodesOnly:           s.server.cfg.NewNodesOnly,
@@ -2587,7 +2542,7 @@ func (s *rpcServer) RegisterSidecar(ctx context.Context,
 func (s *rpcServer) expectSidecarChannel(ctx context.Context,
 	t *sidecar.Ticket) error {
 
-	err := validateOrderedTicket(ctx, t, s.lndServices.Signer, s.server.db)
+	err := acceptor.ValidateOrderedTicket(ctx, t, s.lndServices.Signer, s.server.db)
 	if err != nil {
 		return err
 	}
@@ -2947,53 +2902,6 @@ func unmarshallNodeTier(nodeTier auctioneerrpc.NodeTier) (order.NodeTier,
 	default:
 		return 0, fmt.Errorf("unknown node tier: %v", nodeTier)
 	}
-}
-
-// marshallChannelInfo turns the given channel information map into its RPC
-// counterpart.
-func marshallChannelInfo(chanInfos map[wire.OutPoint]*chaninfo.ChannelInfo) (
-	map[string]*auctioneerrpc.ChannelInfo, error) {
-
-	rpcChannelInfos := make(
-		map[string]*auctioneerrpc.ChannelInfo, len(chanInfos),
-	)
-	for chanPoint, chanInfo := range chanInfos {
-		var channelType auctioneerrpc.ChannelType
-		switch chanInfo.Version {
-		case chanbackup.TweaklessCommitVersion:
-			channelType = auctioneerrpc.ChannelType_TWEAKLESS
-
-		// The AnchorsCommitVersion was never widely deployed (at least
-		// in mainnet) because the lnd version that included it guarded
-		// the anchor channels behind a config flag. Also, the two
-		// anchor versions only differ in the fee negotiation and not
-		// the commitment TX format, so we don't need to distinguish
-		// between them for our purpose.
-		case chanbackup.AnchorsCommitVersion,
-			chanbackup.AnchorsZeroFeeHtlcTxCommitVersion:
-			channelType = auctioneerrpc.ChannelType_ANCHORS
-
-		case chanbackup.ScriptEnforcedLeaseVersion:
-			channelType = auctioneerrpc.ChannelType_SCRIPT_ENFORCED_LEASE
-
-		default:
-			return nil, fmt.Errorf("unknown channel type: %v",
-				chanInfo.Version)
-		}
-		rpcChannelInfos[chanPoint.String()] = &auctioneerrpc.ChannelInfo{
-			Type: channelType,
-			LocalNodeKey: chanInfo.LocalNodeKey.
-				SerializeCompressed(),
-			RemoteNodeKey: chanInfo.RemoteNodeKey.
-				SerializeCompressed(),
-			LocalPaymentBasePoint: chanInfo.LocalPaymentBasePoint.
-				SerializeCompressed(),
-			RemotePaymentBasePoint: chanInfo.RemotePaymentBasePoint.
-				SerializeCompressed(),
-		}
-	}
-
-	return rpcChannelInfos, nil
 }
 
 func unmarshallSidecar(version order.Version,
