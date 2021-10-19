@@ -34,4 +34,8 @@ require (
 	gopkg.in/macaroon.v2 v2.1.0
 )
 
+replace github.com/lightningnetwork/lnd => github.com/getvoltage/lnd v0.15.0-beta.rc2-test.0.20220601115942-d732b234f032
+replace github.com/lightningnetwork/lnd/tor => github.com/voltagecloud/lnd/tor v0.0.0-20220523223115-f85fdbf06496
+replace github.com/lightningnetwork/lnd/cert => github.com/voltagecloud/lnd/cert v1.0.4-0.20220525043616-e4c5bc2f4c4c
+
 replace github.com/lightninglabs/pool/auctioneerrpc => ./auctioneerrpc
