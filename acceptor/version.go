@@ -1,4 +1,4 @@
-package pool
+package acceptor
 
 // Copyright (c) 2013-2017 The btcsuite developers
 // Copyright (c) 2015-2016 The Decred developers
