@@ -1784,7 +1784,7 @@ coinSelection:
 	// A change output will only exist as long as the remaining amount is
 	// above the network's dust limit.
 	var changeOutput *wire.TxOut
-	dustLimit := txrules.GetDustThreshold(
+	dustLimit := GetDustThreshold(
 		input.P2WPKHSize, txrules.DefaultRelayFeePerKb,
 	)
 	if changeAmt >= dustLimit {

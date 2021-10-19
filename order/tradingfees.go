@@ -2,6 +2,7 @@ package order
 
 import (
 	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wallet/txrules"
 	"github.com/lightninglabs/pool/poolscript"
@@ -18,7 +19,7 @@ var (
 
 	// dustLimitP2WPKH is the minimum size of a P2WPKH output to not be
 	// considered dust.
-	dustLimitP2WPKH = txrules.GetDustThreshold(
+	dustLimitP2WPKH = GetDustThreshold(
 		input.P2WPKHSize, txrules.DefaultRelayFeePerKb,
 	)
 
@@ -28,6 +29,24 @@ var (
 	// size.
 	MinNoDustAccountSize = minNoDustAccountSize()
 )
+
+// GetDustThreshold is used to define the amount below which output will be
+// determined as dust. Threshold is determined as 3 times the relay fee.
+func GetDustThreshold(scriptSize int, relayFeePerKb btcutil.Amount) btcutil.Amount {
+        // Calculate the total (estimated) cost to the network.  This is
+        // calculated using the serialize size of the output plus the serial
+        // size of a transaction input which redeems it.  The output is assumed
+        // to be compressed P2PKH as this is the most common script type.  Use
+        // the average size of a compressed P2PKH redeem input (148) rather than
+        // the largest possible (txsizes.RedeemP2PKHInputSize).
+        totalSize := 8 + wire.VarIntSerializeSize(uint64(scriptSize)) +
+                scriptSize + 148
+
+        byteFee := relayFeePerKb / 1000
+        relayFee := btcutil.Amount(totalSize) * byteFee
+        return 3 * relayFee
+}
+
 
 // FixedRatePremium is the unit that we'll use to express the "lease" rate of
 // the funds within a channel. This value is compounded every N blocks. As a

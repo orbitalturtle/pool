@@ -366,11 +366,12 @@ func loadCertWithCreate(cfg *Config) (tls.Certificate, *x509.Certificate,
 		!lnrpc.FileExists(cfg.TLSKeyPath) {
 
 		log.Infof("Generating TLS certificates...")
-		err := cert.GenCertPair(
+		_, _, err := cert.GenCertPair(
 			defaultSelfSignedOrganization, cfg.TLSCertPath,
 			cfg.TLSKeyPath, cfg.TLSExtraIPs,
 			cfg.TLSExtraDomains, cfg.TLSDisableAutofill,
-			cert.DefaultAutogenValidity,
+			cert.DefaultAutogenValidity, // 14*30*24*time.Hour, 
+			false, nil,
 		)
 		if err != nil {
 			return tls.Certificate{}, nil, err
@@ -378,5 +379,10 @@ func loadCertWithCreate(cfg *Config) (tls.Certificate, *x509.Certificate,
 		log.Infof("Done generating TLS certificates")
 	}
 
-	return cert.LoadCert(cfg.TLSCertPath, cfg.TLSKeyPath)
+	certBytes, keyBytes, err := cert.GetCertBytesFromPath(cfg.TLSCertPath, cfg.TLSKeyPath)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+
+	return cert.LoadCert(certBytes, keyBytes)
 }

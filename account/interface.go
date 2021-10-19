@@ -439,6 +439,23 @@ type OutputWithFee struct {
 	FeeRate chainfee.SatPerKWeight
 }
 
+// GetDustThreshold is used to define the amount below which output will be
+// determined as dust. Threshold is determined as 3 times the relay fee.
+func GetDustThreshold(scriptSize int, relayFeePerKb btcutil.Amount) btcutil.Amount {
+	// Calculate the total (estimated) cost to the network.  This is
+	// calculated using the serialize size of the output plus the serial
+	// size of a transaction input which redeems it.  The output is assumed
+	// to be compressed P2PKH as this is the most common script type.  Use
+	// the average size of a compressed P2PKH redeem input (148) rather than
+	// the largest possible (txsizes.RedeemP2PKHInputSize).
+	totalSize := 8 + wire.VarIntSerializeSize(uint64(scriptSize)) +
+		scriptSize + 148
+
+	byteFee := relayFeePerKb / 1000
+	relayFee := btcutil.Amount(totalSize) * byteFee
+	return 3 * relayFee
+}
+
 func (o *OutputWithFee) CloseOutputs(accountValue btcutil.Amount,
 	witnessType witnessType) ([]*wire.TxOut, error) {
 
@@ -469,19 +486,19 @@ func (o *OutputWithFee) CloseOutputs(accountValue btcutil.Amount,
 	switch pkScript.Class() {
 	case txscript.WitnessV0PubKeyHashTy:
 		weightEstimator.AddP2WKHOutput()
-		dustLimit = txrules.GetDustThreshold(
+		dustLimit = GetDustThreshold(
 			input.P2WKHOutputSize, txrules.DefaultRelayFeePerKb,
 		)
 
 	case txscript.ScriptHashTy:
 		weightEstimator.AddP2SHOutput()
-		dustLimit = txrules.GetDustThreshold(
+		dustLimit = GetDustThreshold(
 			input.P2SHOutputSize, txrules.DefaultRelayFeePerKb,
 		)
 
 	case txscript.WitnessV0ScriptHashTy:
 		weightEstimator.AddP2WSHOutput()
-		dustLimit = txrules.GetDustThreshold(
+		dustLimit = GetDustThreshold(
 			input.P2WSHOutputSize, txrules.DefaultRelayFeePerKb,
 		)
 	}
