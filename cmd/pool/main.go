@@ -15,6 +15,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/pool"
+	"github.com/lightninglabs/pool/acceptor"
 	"github.com/lightninglabs/pool/poolrpc"
 	"github.com/lightninglabs/protobuf-hex-display/json"
 	"github.com/lightninglabs/protobuf-hex-display/jsonpb"
@@ -117,7 +118,7 @@ func fatal(err error) {
 func main() {
 	app := cli.NewApp()
 
-	app.Version = pool.Version()
+	app.Version = acceptor.Version()
 	app.Name = "pool"
 	app.Usage = "control plane for your poold"
 	app.Flags = []cli.Flag{
